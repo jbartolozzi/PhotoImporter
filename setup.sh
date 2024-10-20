@@ -21,3 +21,5 @@ if [ ! -d "${CONDA_DIR}" ]; then
 fi
 
 export PATH="${CONDA_DIR}/bin:$PATH"
+
+# pyinstaller --onefile --windowed --icon=icon.icns app.py
