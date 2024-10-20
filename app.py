@@ -1,22 +1,10 @@
 #!/usr/bin/env python3
-import datetime
 import os
-import re
 import shutil
-import subprocess
 import sys
 import time
-import tqdm
-import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from PIL import Image
 from PySide6 import QtWidgets, QtCore, QtGui
-
-NUM_THREADS = int(os.getenv("FUJI_IMPORT_THREADS", "8"))
-WORKDIR = os.getenv("FUJI_IMPORT_DIR", os.path.expandvars("$HOME/Pictures/Fuji"))
-JPG_DIR = os.path.join(WORKDIR, "JPG")
-COMPRESSED_DIR = os.path.join(WORKDIR, "Compressed")
-MOV_DIR = os.path.join(WORKDIR, "Video")
+import core
 
 
 class FilePicker(QtWidgets.QWidget):
@@ -87,6 +75,17 @@ class FilePicker(QtWidgets.QWidget):
         return os.path.exists(self.line_edit.text())
 
 
+def list_volumes():
+    """ Lists mounted volumes found in /Volumes directory on macOS """
+    volumes_path = "/Volumes"
+    try:
+        # List directories in /Volumes, which are the mounted volumes
+        return [volume for volume in os.listdir(volumes_path) if os.path.isdir(os.path.join(volumes_path, volume))]
+    except FileNotFoundError:
+        # In case the /Volumes directory does not exist
+        return []
+
+
 class SettingsDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super(SettingsDialog, self).__init__(parent)
@@ -142,8 +141,8 @@ class SettingsDialog(QtWidgets.QDialog):
 
     def load_settings(self):
         settings = QtCore.QSettings('rischio', 'PhotoImporter')
-        self.thread_spinbox.setValue(settings.value('num_threads', 4, int))
-        self.compression_spinbox.setValue(settings.value('compression_amount', 50.0, float))
+        self.thread_spinbox.setValue(settings.value('num_threads', 8, int))
+        self.compression_spinbox.setValue(settings.value('compression_amount', 90.0, float))
         self.sound_checkbox.setChecked(settings.value('play_sound', True, bool))
 
 
@@ -181,7 +180,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(self.tab_widget)
 
         self._loadWidgetSettings()
-
+        self.setMinimumSize(self.sizeHint())
+        self.setMaximumSize(self.sizeHint())
         self.show()
 
     def _openSettings(self):
@@ -271,17 +271,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self.file_picker_dst.setEnabled(False)
         self.button_import.setEnabled(False)
 
-        QtWidgets.QApplication.processEvents()
-        for widget in list(widget for (name, widget) in vars(self).items()
-                           if isinstance(widget, QtWidgets.QWidget)):
-            widget.repaint()
+        workdir = self.file_picker_dst.text()
 
-        time.sleep(3)
+        QtWidgets.QApplication.processEvents()
+        import_locations = self._getImportLocations()
+        settings = QtCore.QSettings('rischio', 'PhotoImporter')
+        core.runImport(import_locations,
+                       workdir,
+                       settings.value('num_threads', 8, int),
+                       self.statusbar,
+                       self.progress_bar)
+
+        self.say("Import Complete")
+        self.statusbar.showMessage("Import Complete")
+
         self.file_picker_src.setEnabled(True)
         self.file_picker_dst.setEnabled(True)
         self.button_import.setEnabled(True)
-        self.say("Import Complete")
-        self.statusbar.showMessage("Import Complete")
 
     def _createOrganizeWidget(self):
         widget_container = QtWidgets.QWidget()
@@ -406,298 +412,75 @@ class MainWindow(QtWidgets.QMainWindow):
     def closeEvent(self, event):
         self._saveWidgetSettings()
 
-    def getDateTaken(path):
-        if path.lower().endswith(".mov"):
-            c_timestamp = os.path.getctime(path)
-            c_datestamp = datetime.datetime.fromtimestamp(c_timestamp)
-            output = c_datestamp.strftime('%Y/%m/%d %H:%M:%S')
+    def promptUser(self, title, question):
+        # app = QtWidgets.QApplication.instance()  # checks if QApplication already exists
+        # if not app:  # create QApplication if it doesnt exist
+        #     app = QtWidgets.QApplication(sys.argv)
+
+        response = QtWidgets.QMessageBox.question(
+            None, title, question,
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No)
+
+        if response == QtWidgets.QMessageBox.Yes:
+            return True
         else:
-            exif = Image.open(path)._getexif()
-            if not exif:
-                raise Exception('Image {0} does not have EXIF data.'.format(path))
-                return
-            result = datetime.datetime.strptime(exif[36867], "%Y:%m:%d %H:%M:%S")
-            output = result.strftime('%Y/%m/%d %H:%M:%S')
+            return False
 
-        return output
-
-    def ymdToMdy(self, ymd):
-        parsed = datetime.datetime.strptime(ymd, '%Y/%m/%d %H:%M:%S')
-        return parsed.strftime('%m/%d/%Y %H:%M:%S')
-
-    def getFileList(self, directory):
-        if os.path.exists(directory):
-            return list(os.path.join(root, file) for root, dirs, files in os.walk(directory) for file in files)
-        else:
-            return []
-
-    def runCommand(self, command):
-        process = subprocess.Popen(
-            command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-        cmd_output, cmd_err = process.communicate()
-        return (cmd_output.decode("utf-8").strip(), cmd_err.decode("utf-8").strip())
+    def notifyUser(self, title, message):
+        msg_box = QtWidgets.QMessageBox()  # Create a new QMessageBox
+        msg_box.setWindowTitle(title)  # Set the title for the message box
+        msg_box.setText(message)  # Set the text for the message box
+        msg_box.setStandardButtons(QtWidgets.QMessageBox.Ok)  # Add an OK button to the message box
+        msg_box.exec()  # Execute the message box
 
     def say(self, msg):
-        os.system(f'say {msg}')
-
-    def getImportLocations(self):
-        import_locations = []
-        volumes = "/Volumes"
-        for volume in os.listdir(volumes):
-            try:
-                if "DCIM" in os.listdir(os.path.join(volumes, volume)):
-                    dcim = os.path.join(volumes, volume, "DCIM")
-                    import_locations.extend(
-                        list(os.path.join(dcim, fuji) for fuji in os.listdir(dcim)))
-            except PermissionError:
-                # print("%s %s" % (color(f"Unable to read", "red"), color(volume, "bold")))
-                pass
-
-        return import_locations
-
-    def getOutputImageNames(self, input_file, output_jpg_dir, output_compressed_dir):
-        date_taken = self.getDateTaken(input_file)
-        date_folder = date_taken.split(" ")[0].replace("/", "_")
-
-        file_name = os.path.basename(input_file).replace("DSCF", "")
-        file_number = re.findall(r'\d+', file_name)[-1]
-        fuji_folder = os.path.basename(os.path.dirname(input_file))
-        folder_numbers = re.findall(r'\d+', fuji_folder)
-
-        if len(folder_numbers) > 0:
-            combined_name = date_folder + "_" + \
-                file_name.replace(file_number, folder_numbers[0] + file_number)
-        else:
-            combined_name = date_folder + "_" + file_name
-
-        combined_name = combined_name
-        output_jpg_file = os.path.join(
-            output_jpg_dir, date_folder, combined_name)
-
-        output_compressed_file = os.path.join(
-            output_compressed_dir, date_folder,
-            combined_name.replace(".JPG", ".jpg").replace(".jpg", "c.jpg"))
-
-        return date_taken, output_jpg_file, output_compressed_file
-
-    def _getOutputImageList(self, input_files):
-        def _checkInputThread(input_file):
-            date_taken, output_jpg_file, output_compressed_file = \
-                self.getOutputImageNames(
-                    input_file, JPG_DIR, COMPRESSED_DIR)
-            if not os.path.exists(output_compressed_file):
-                return (input_file, date_taken, output_jpg_file, output_compressed_file)
-            else:
-                return None
-
-        global DEBUG
-        output = []
-
-        if DEBUG is True:
-
-            print("Checking images using single thread.")
-            for input_file in tqdm.tqdm(input_files):
-                date_taken, output_jpg_file, output_compressed_file = \
-                    self.getOutputImageNames(
-                        input_file, JPG_DIR, COMPRESSED_DIR)
-                if not os.path.exists(output_compressed_file):
-                    output.append(
-                        (input_file, date_taken, output_jpg_file, output_compressed_file))
-
-        else:
-            with tqdm.tqdm(total=len(input_files)) as pbar:
-                with ThreadPoolExecutor(max_workers=NUM_THREADS) as ex:
-                    futures = [
-                        ex.submit(_checkInputThread, input_file)
-                        for input_file in input_files
-                    ]
-                    for future in as_completed(futures):
-                        result = future.result()
-                        if result is not None:
-                            output.append(result)
-                        pbar.update(1)
-        return output
-
-    def _getOutputMovieNames(self, input_file, movie_dir):
-        date_taken = self.getDateTaken(input_file)
-        date_folder = date_taken.split(" ")[0].replace("/", "_")
-
-        file_name = os.path.basename(input_file)
-        file_number = re.findall(r'\d+', file_name)[-1]
-
-        fuji_folder = os.path.basename(os.path.dirname(input_file))
-        folder_numbers = re.findall(r'\d+', fuji_folder)
-
-        if len(folder_numbers) > 0:
-            combined_name = date_folder + "_" + \
-                file_name.replace(file_number, "_" + folder_numbers[0] + file_number)
-        else:
-            combined_name = date_folder + "_" + file_name
-
-        output_mov_file = os.path.join(
-            movie_dir, date_folder, combined_name)
-
-        return date_taken, output_mov_file
-
-    def _getOutputMovieList(self, input_files):
-        output = []
-        for input_file in tqdm.tqdm(input_files):
-            date_taken, output_mov_file = self._getOutputMovieNames(input_file, MOV_DIR)
-            if not os.path.exists(output_mov_file):
-                output.append((input_file, date_taken, output_mov_file))
-        return output
+        settings = QtCore.QSettings('rischio', 'PhotoImporter')
+        if settings.value('play_sound', True, bool):
+            os.system(f'say {msg}')
 
     def _getImportLocations(self):
-        import_locations = self.getImportLocations()
-        if len(import_locations) < 1:
-            # print(color("No DCIM directories found in any volumes.", "bold"))
-            # print("... plug in a %s." % color("SD card", "underline"))
+        def _getDCIMLocations(selected_import_path):
+            import_locations = []
+            if os.path.exists(selected_import_path) and "DCIM" in os.listdir(selected_import_path):
+                dcim = os.path.join(selected_import_path, "DCIM")
+                import_locations.extend(
+                    list(os.path.join(dcim, fuji) for fuji in os.listdir(dcim)))
+
+            return import_locations
+
+        import_folders = _getDCIMLocations(self.file_picker_src.text())
+
+        workdir = self.file_picker_dst.text()
+        jpg_dir = os.path.join(workdir, "JPG")
+        compressed_dir = os.path.join(workdir, "Compressed")
+        video_dir = os.path.join(workdir, "Video")
+
+        if len(import_folders) < 1:
+            self.notifyUser("PhotoImporter",
+                            "No DCIM directories found in any volumes. Plug in a SD card.")
             return []
 
-        if not os.path.exists(JPG_DIR):
-            # if not promptUser(f"Output directory {JPG_DIR} does not exists. Would you like to create it?"):
-            #     return []
-            os.mkdir(JPG_DIR)
+        if not os.path.exists(jpg_dir):
+            if not self.promptUser("Photo Importer", f"Output directory {jpg_dir} does not exists. Would you like to create it?"):
+                return []
+            os.mkdir(jpg_dir)
 
-        if not os.path.exists(COMPRESSED_DIR):
-            # if not promptUser(f"Output directory {COMPRESSED_DIR} does not exists. Would you like to create it?"):
-            #     return []
-            os.mkdir(COMPRESSED_DIR)
+        if not os.path.exists(compressed_dir):
+            if not self.promptUser("Photo Importer", f"Output directory {compressed_dir} does not exists. Would you like to create it?"):
+                return []
+            os.mkdir(compressed_dir)
 
-        # print("Importing data from\n%s" % "\n".join(
-        #     list(color(location, "bold")
-        #          for location in import_locations)))
-        return import_locations
+        if not os.path.exists(video_dir):
+            if not self.promptUser("Photo Importer", f"Output directory {video_dir} does not exists. Would you like to create it?"):
+                return []
+            os.mkdir(video_dir)
 
-    def _getInputFileList(self, import_locations, file_type):
-        output = []
-        for import_location in import_locations:
-            output.extend(
-                sorted(
-                    list(os.path.join(import_location, file)
-                         for file in os.listdir(import_location)
-                         if (file.endswith(file_type) or file.endswith(file_type.upper()))
-                         and not file.startswith(".")
-                         )))
-        return output
-
-    def _splitList(self, input_list, n):
-        # Calculate the size of each sublist
-        k, m = divmod(len(input_list), n)
-        # Create the sublists
-        sublists = [input_list[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(n)]
-        return sublists
-
-    def _processImages(self, args):
-        input_file, date_taken, output_jpg_file, output_compressed_file = args
-        if DEBUG is True:
-            print(f"Copying {input_file}, {output_jpg_file}")
-            print(
-                f"/opt/homebrew/bin/gm convert -quality 90% {input_file} {output_compressed_file}")
-
-        # Cant make directories on multiple threads
-        # if not os.path.exists(os.path.dirname(output_jpg_file)):
-        #     os.mkdir(os.path.dirname(output_jpg_file))
-        # if not os.path.exists(os.path.dirname(output_compressed_file)):
-        #     os.mkdir(os.path.dirname(output_compressed_file))
-
-        shutil.copyfile(input_file, output_jpg_file)
-        self.runCommand(
-            f"/opt/homebrew/bin/gm convert -quality 90% {input_file} {output_compressed_file}")
-
-        if os.path.exists(output_compressed_file):
-            self.runCommand("SetFile -d \"%s\" \"%s\"" %
-                            (self.ymdToMdy(date_taken), output_compressed_file))
-
-        if os.path.exists(output_jpg_file):
-            self.runCommand("SetFile -d \"%s\" \"%s\"" %
-                            (self.ymdToMdy(date_taken), output_jpg_file))
-
-        else:
-            print(f"Error: output file {output_compressed_file} not found. Exiting.")
-            return
-
-    def _processMovies(self, outputs):
-        global DEBUG
-        for (input_file, date_taken, output_mov_file) in tqdm.tqdm(outputs):
-            if DEBUG is True:
-                print(f"Copying {input_file}, {output_mov_file}")
-            else:
-                if not os.path.exists(os.path.dirname(output_mov_file)):
-                    os.mkdir(os.path.dirname(output_mov_file))
-
-                shutil.copyfile(input_file, output_mov_file)
-
-    def runImport(self, args):
-
-        # print("Copying images to %s" % color(JPG_DIR, "bold"))
-        # print("Writing compressed images to %s" % color(COMPRESSED_DIR, "bold"))
-
-        import_locations = self._getImportLocations()
-        if len(import_locations) <= 0:
-            return
-
-        outputs = []
-        input_files = self._getInputFileList(import_locations, ".jpg")
-
-        # print("Checking %s images from input volumes." % color(len(input_files), "bold"))
-        outputs = self._getOutputImageList(input_files)
-        # print("Importing %s images from input volumes." % color(len(outputs), "bold"))
-
-        # Make the new directories in the main thread
-        for input_file, date_taken, output_jpg_file, output_compressed_file in outputs:
-            if not os.path.exists(os.path.dirname(output_jpg_file)):
-                os.mkdir(os.path.dirname(output_jpg_file))
-            if not os.path.exists(os.path.dirname(output_compressed_file)):
-                os.mkdir(os.path.dirname(output_compressed_file))
-
-        if len(outputs) > 0:
-            progress_bar = tqdm.tqdm(total=len(outputs),
-                                     desc=f"Importing images", unit="image")
-            if DEBUG:
-                for args in outputs:
-                    progress_bar.update(1)
-                    self._processImages(args)
-            else:
-                image_lists = self._splitList(outputs, NUM_THREADS)
-                with ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
-                    futures = [executor.submit(self._processImages, args)
-                               for sublist in image_lists for args in sublist]
-                    # Use as_completed to iterate over completed futures
-                    for future in as_completed(futures):
-                        try:
-                            result = future.result()
-                            progress_bar.update(1)
-                            if result is not None:
-                                print(f"{result} failed to write.", file=sys.stderr)
-                        except Exception as e:
-                            print("Exception:", e, file=sys.stderr)
-                            traceback.print_exc()
-        else:
-            # print(color("All images are up to date.", "green"))
-            pass
-        input_movies = self._getInputFileList(import_locations, ".mov")
-
-        # print("Checking %s movies from input volumes." % color(len(input_movies), "bold"))
-        input_movies = self._getInputFileList(import_locations, ".mov")
-        output_movies = self._getOutputMovieList(input_movies)
-        # print("Importing %s movies from input volumes." % color(len(output_movies), "bold"))
-
-        if len(output_movies) > 0:
-            self._processMovies(output_movies)
-        else:
-            # print(color("All movies are up to date.", "green"))
-            pass
-
-        # for import_location in import_locations:
-        # printDiskUsage(import_locations[0])
-
-        # print(color("Import complete.", "green"))
+        return import_folders
 
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
-    app.setWindowIcon(QtGui.QIcon('icon.png'))  # Optionally set the application icon
+    app.setWindowIcon(QtGui.QIcon('icon.png'))
     w = MainWindow()
     app.exec()
