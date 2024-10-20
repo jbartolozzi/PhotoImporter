@@ -4,9 +4,11 @@ import subprocess
 import re
 import shutil
 import sys
+import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
+from PySide6.QtCore import QObject, Signal, Slot, QThread
 
 
 def _splitList(input_list, n):
@@ -130,52 +132,6 @@ def _processImages(input_file, date_taken, output_jpg_file, output_compressed_fi
         return
 
 
-def _getOutputImageList(input_files, num_threads, workdir, progress_bar):
-    jpg_dir = os.path.join(workdir, "JPG")
-    compressed_dir = os.path.join(workdir, "Compressed")
-
-    def _checkInputThread(input_file):
-        date_taken, output_jpg_file, output_compressed_file = \
-            getOutputImageNames(
-                input_file, jpg_dir, compressed_dir)
-        if not os.path.exists(output_compressed_file):
-            return (input_file, date_taken, output_jpg_file, output_compressed_file)
-        else:
-            return None
-
-    DEBUG = False
-    output = []
-
-    if DEBUG is True:
-        progress_bar.setRange(0, len(input_files))
-        counter = 0
-        for input_file in input_files:
-            date_taken, output_jpg_file, output_compressed_file = \
-                getOutputImageNames(
-                    input_file, jpg_dir, compressed_dir)
-            if not os.path.exists(output_compressed_file):
-                output.append(
-                    (input_file, date_taken, output_jpg_file, output_compressed_file))
-            counter += 1
-            progress_bar.setValue(counter)
-    else:
-        # with tqdm.tqdm(total=len(input_files)) as pbar:
-        progress_bar.setRange(0, len(input_files))
-        counter = 0
-        with ThreadPoolExecutor(max_workers=num_threads) as ex:
-            futures = [
-                ex.submit(_checkInputThread, input_file)
-                for input_file in input_files
-            ]
-            for future in as_completed(futures):
-                result = future.result()
-                if result is not None:
-                    output.append(result)
-                    counter += 1
-                    progress_bar.setValue(counter)
-    return output
-
-
 def _getInputFileList(import_locations, file_type):
     output = []
     for import_location in import_locations:
@@ -189,68 +145,150 @@ def _getInputFileList(import_locations, file_type):
     return output
 
 
-def _processMovies(outputs, statusbar, progress_bar):
-    global DEBUG
-    progress_bar.setRange(0, len(outputs))
-    counter = 0
-    for (input_file, date_taken, output_mov_file) in outputs:
-        if not os.path.exists(os.path.dirname(output_mov_file)):
-            os.mkdir(os.path.dirname(output_mov_file))
+class Worker(QObject):
+    progress = Signal(int)  # Signal to emit progress
+    status = Signal(str)
+    prange = Signal(int, int)
+    finished = Signal()
 
-        shutil.copyfile(input_file, output_mov_file)
-        statusbar.showMessage(f"Copying {input_file}, {output_mov_file}")
-        counter += 1
-        progress_bar.setValue(counter)
+    def __init__(self, workdir, num_threads, import_locations):
+        super().__init__()
 
+        self.workdir = workdir
+        self.num_threads = num_threads
+        self.import_locations = import_locations
 
-def runImport(import_locations, workdir, num_threads, statusbar, progress_bar):
-    # import_locations = _getImportLocations()
-    if len(import_locations) <= 0:
-        return
+    def run(self):
 
-    outputs = []
-    input_files = _getInputFileList(import_locations, ".jpg")
-    statusbar.showMessage(f"Checking {len(input_files)} images from input volume.")
-    outputs = _getOutputImageList(input_files, num_threads, workdir, progress_bar)
-    statusbar.showMessage(f"Importing {len(outputs)} images from input volume.")
+        src_files = self.getAllSrcImageFiles(self.import_locations, self.workdir)
+        
+        self.prange.emit(0, len(src_files))
+        new_source_images_tuple = self.getNewSrcImageFiles(
+            src_files, self.num_threads, self.workdir)
+        self.progress.emit(0)
 
-    # Make the new directories in the main thread
-    for input_file, date_taken, output_jpg_file, output_compressed_file in outputs:
-        if not os.path.exists(os.path.dirname(output_jpg_file)):
-            os.mkdir(os.path.dirname(output_jpg_file))
-        if not os.path.exists(os.path.dirname(output_compressed_file)):
-            os.mkdir(os.path.dirname(output_compressed_file))
+        if len(new_source_images_tuple) > 0:
+            self.prange.emit(0, len(new_source_images_tuple))
+            self.runImageImport(new_source_images_tuple, self.workdir, self.num_threads)
+        self.progress.emit(len(new_source_images_tuple))
+        self.finished.emit()
 
-    if len(outputs) > 0:
-        progress_bar.setRange(0, len(outputs))
+    def _processMovies(self, outputs):
+        # progress_bar.setRange(0, len(outputs))
         counter = 0
-        image_lists = _splitList(outputs, num_threads)
-        with ThreadPoolExecutor(max_workers=num_threads) as executor:
-            futures = [executor.submit(_processImages, input_file, date_taken, output_jpg_file, output_compressed_file)
-                       for sublist in image_lists for input_file, date_taken, output_jpg_file, output_compressed_file in sublist]
-            # Use as_completed to iterate over completed futures
+        for (input_file, date_taken, output_mov_file) in outputs:
+            if not os.path.exists(os.path.dirname(output_mov_file)):
+                os.mkdir(os.path.dirname(output_mov_file))
+
+            shutil.copyfile(input_file, output_mov_file)
+            # statusbar.showMessage(f"Copying {input_file}, {output_mov_file}")
+            counter += 1
+            # progress_bar.setValue(counter)
+
+    def _getOutputImageList(self, input_files, num_threads, workdir):
+        jpg_dir = os.path.join(workdir, "JPG")
+        compressed_dir = os.path.join(workdir, "Compressed")
+
+        def _checkInputThread(input_file):
+            date_taken, output_jpg_file, output_compressed_file = \
+                getOutputImageNames(
+                    input_file, jpg_dir, compressed_dir)
+            if not os.path.exists(output_compressed_file):
+                return (input_file, date_taken, output_jpg_file, output_compressed_file)
+            else:
+                return None
+
+        output = []
+        counter = 0
+        with ThreadPoolExecutor(max_workers=num_threads) as ex:
+            futures = [
+                ex.submit(_checkInputThread, input_file)
+                for input_file in input_files
+            ]
             for future in as_completed(futures):
-                try:
-                    result = future.result()
-                    counter += 1
-                    progress_bar.setValue(counter)
-                    if result is not None:
-                        statusbar.showMessage(f"{result} failed to write.", file=sys.stderr)
-                except Exception as e:
-                    print("Exception:", e, file=sys.stderr)
-                    traceback.print_exc()
-    else:
-        statusbar.showMessage("All images are up to date.")
+                result = future.result()
+                print(result)
+                counter += 1
+                self.progress.emit(counter)
+                if result is not None:
+                    output.append(result)
+        return output
 
-    input_movies = _getInputFileList(import_locations, ".mov")
-    statusbar.showMessage(f"Checking {len(input_movies)} movies from input volumes.")
-    input_movies = _getInputFileList(import_locations, ".mov")
-    output_movies = _getOutputMovieList(workdir, input_movies)
-    statusbar.showMessage(f"Importing {len(output_movies)} movies from input volumes.")
+    def getAllSrcImageFiles(self, import_locations, workdir):
+        if len(import_locations) <= 0:
+            return []
+        return _getInputFileList(import_locations, ".jpg")
 
-    if len(output_movies) > 0:
-        _processMovies(output_movies, statusbar, progress_bar)
-    else:
-        statusbar.showMessage("All movies are up to date.")
+    def getNewSrcImageFiles(self, input_files, num_threads, workdir):
+        jpg_dir = os.path.join(workdir, "JPG")
+        compressed_dir = os.path.join(workdir, "Compressed")
 
-    statusbar.showMessage("Import complete.")
+        def _checkInputThread(input_file):
+            date_taken, output_jpg_file, output_compressed_file = \
+                getOutputImageNames(
+                    input_file, jpg_dir, compressed_dir)
+            if not os.path.exists(output_compressed_file):
+                return (input_file, date_taken, output_jpg_file, output_compressed_file)
+            else:
+                return None
+
+        output = []
+        counter = 0
+        with ThreadPoolExecutor(max_workers=num_threads) as ex:
+            futures = [
+                ex.submit(_checkInputThread, input_file)
+                for input_file in input_files
+            ]
+            for future in as_completed(futures):
+                result = future.result()
+                counter += 1
+                self.progress.emit(counter)
+                if result is not None:
+                    output.append(result)
+        return output
+
+    def runImageImport(self, new_source_images_tuple, workdir, num_threads):
+        if len(new_source_images_tuple) <= 0:
+            return
+
+        # Make the new directories in the main thread
+        for input_file, date_taken, output_jpg_file, output_compressed_file in new_source_images_tuple:
+            if not os.path.exists(os.path.dirname(output_jpg_file)):
+                os.mkdir(os.path.dirname(output_jpg_file))
+            if not os.path.exists(os.path.dirname(output_compressed_file)):
+                os.mkdir(os.path.dirname(output_compressed_file))
+
+        if len(new_source_images_tuple) > 0:
+            # progress_bar.setRange(0, len(new_source_images_tuple))
+            counter = 0
+            image_lists = _splitList(new_source_images_tuple, num_threads)
+            with ThreadPoolExecutor(max_workers=num_threads) as executor:
+                futures = [executor.submit(_processImages, input_file, date_taken, output_jpg_file, output_compressed_file)
+                           for sublist in image_lists for input_file, date_taken, output_jpg_file, output_compressed_file in sublist]
+                # Use as_completed to iterate over completed futures
+                for future in as_completed(futures):
+                    try:
+                        result = future.result()
+                        counter += 1
+                        self.progress.emit(counter)
+                        if result is not None:
+                            self.status.emit(f"{result} failed to write.", file=sys.stderr)
+                    except Exception as e:
+                        print("Exception:", e, file=sys.stderr)
+                        traceback.print_exc()
+        else:
+            # self.status.emit("All images are up to date.")
+            pass
+
+        # input_movies = _getInputFileList(import_locations, ".mov")
+        # statusbar.showMessage(f"Checking {len(input_movies)} movies from input volumes.")
+        # input_movies = _getInputFileList(import_locations, ".mov")
+        # output_movies = _getOutputMovieList(workdir, input_movies)
+        # statusbar.showMessage(f"Importing {len(output_movies)} movies from input volumes.")
+
+        # if len(output_movies) > 0:
+        #     _processMovies(output_movies, statusbar, progress_bar)
+        # else:
+        #     statusbar.showMessage("All movies are up to date.")
+
+        # statusbar.showMessage("Import complete.")

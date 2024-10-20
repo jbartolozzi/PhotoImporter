@@ -177,6 +177,8 @@ class MainWindow(QtWidgets.QMainWindow):
         settings_action.triggered.connect(self._openSettings)
         settings_menu.addAction(settings_action)
 
+        self.thread_import = QtCore.QThread()
+
         self.setCentralWidget(self.tab_widget)
 
         self._loadWidgetSettings()
@@ -276,15 +278,23 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QApplication.processEvents()
         import_locations = self._getImportLocations()
         settings = QtCore.QSettings('rischio', 'PhotoImporter')
-        core.runImport(import_locations,
-                       workdir,
-                       settings.value('num_threads', 8, int),
-                       self.statusbar,
-                       self.progress_bar)
+        num_threads = settings.value('num_threads', 8, int)
 
+        self.worker = core.Worker(workdir, num_threads, import_locations)
+        self.worker.moveToThread(self.thread_import)
+        self.worker.progress.connect(self.progress_bar.setValue)
+        self.worker.prange.connect(self.progress_bar.setRange)
+        self.worker.status.connect(self.statusbar.showMessage)
+        self.worker.finished.connect(self._importThreadCompleted)
+
+        self.thread_import.started.connect(self.worker.run)
+        self.thread_import.start()
+
+    def _importThreadCompleted(self):
+        self.thread_import.quit()
+        self.thread_import.wait()
         self.say("Import Complete")
         self.statusbar.showMessage("Import Complete")
-
         self.file_picker_src.setEnabled(True)
         self.file_picker_dst.setEnabled(True)
         self.button_import.setEnabled(True)
@@ -410,7 +420,10 @@ class MainWindow(QtWidgets.QMainWindow):
         settings.sync()
 
     def closeEvent(self, event):
+        self.thread_import.quit()
+        self.thread_import.wait()
         self._saveWidgetSettings()
+        super().closeEvent(event)
 
     def promptUser(self, title, question):
         # app = QtWidgets.QApplication.instance()  # checks if QApplication already exists
@@ -440,16 +453,13 @@ class MainWindow(QtWidgets.QMainWindow):
             os.system(f'say {msg}')
 
     def _getImportLocations(self):
-        def _getDCIMLocations(selected_import_path):
-            import_locations = []
-            if os.path.exists(selected_import_path) and "DCIM" in os.listdir(selected_import_path):
-                dcim = os.path.join(selected_import_path, "DCIM")
-                import_locations.extend(
-                    list(os.path.join(dcim, fuji) for fuji in os.listdir(dcim)))
 
-            return import_locations
-
-        import_folders = _getDCIMLocations(self.file_picker_src.text())
+        selected_import_path = self.file_picker_src.text()
+        import_folders = []
+        if os.path.exists(selected_import_path) and "DCIM" in os.listdir(selected_import_path):
+            dcim = os.path.join(selected_import_path, "DCIM")
+            import_folders.extend(
+                list(os.path.join(dcim, fuji) for fuji in os.listdir(dcim) if os.path.isdir(os.path.join(dcim, fuji))))
 
         workdir = self.file_picker_dst.text()
         jpg_dir = os.path.join(workdir, "JPG")
