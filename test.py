@@ -13,7 +13,7 @@ class Worker(QObject):
         num_tasks = 10
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(self.task, i) for i in range(num_tasks)]
-            
+
             # Process completed tasks
             completed_tasks = 0
             for future in as_completed(futures):
@@ -27,7 +27,6 @@ class Worker(QObject):
         from time import sleep
         sleep(10)  # Simulate a task taking time
         return value * value
-
 
 
 class MainWindow(QMainWindow):
@@ -67,6 +66,7 @@ class MainWindow(QMainWindow):
         self.thread.quit()
         self.thread.wait()
         super().closeEvent(event)
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

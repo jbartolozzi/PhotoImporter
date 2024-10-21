@@ -230,15 +230,26 @@ class MainWindow(QtWidgets.QMainWindow):
         hbox_progress.addWidget(self.progress_bar)
         widget_progress.setLayout(hbox_progress)
 
+        widget_buttons = QtWidgets.QWidget()
+        hbox_buttons = QtWidgets.QHBoxLayout()
+
         self.button_import = QtWidgets.QPushButton("Import")
         self.button_import.clicked.connect(self._runImport)
         self.button_import.setEnabled(False)
+
+        self.button_cancel_import = QtWidgets.QPushButton("Cancel")
+        self.button_cancel_import.clicked.connect(self._cancelImport)
+        self.button_cancel_import.setEnabled(False)
+
+        hbox_buttons.addWidget(self.button_import)
+        hbox_buttons.addWidget(self.button_cancel_import)
+        widget_buttons.setLayout(hbox_buttons)
 
         vbox_layout = QtWidgets.QVBoxLayout()
         vbox_layout.addWidget(self.file_picker_src)
         vbox_layout.addWidget(widget_storage)
         vbox_layout.addWidget(self.file_picker_dst)
-        vbox_layout.addWidget(self.button_import)
+        vbox_layout.addWidget(widget_buttons)
         vbox_layout.addWidget(widget_progress)
         vbox_layout.addStretch()
 
@@ -268,6 +279,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.storage_bar.setValue(used_percentage)
 
     def _runImport(self):
+        self.button_cancel_import.setEnabled(True)
         self.statusbar.showMessage("Importing Images")
         self.file_picker_src.setEnabled(False)
         self.file_picker_dst.setEnabled(False)
@@ -286,18 +298,32 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.prange.connect(self.progress_bar.setRange)
         self.worker.status.connect(self.statusbar.showMessage)
         self.worker.finished.connect(self._importThreadCompleted)
+        self.worker.canceled.connect(self._taskCanceled)
 
         self.thread_import.started.connect(self.worker.run)
         self.thread_import.start()
 
     def _importThreadCompleted(self):
-        self.thread_import.quit()
+        self.thread_import.exit()
         self.thread_import.wait()
         self.say("Import Complete")
-        self.statusbar.showMessage("Import Complete")
         self.file_picker_src.setEnabled(True)
         self.file_picker_dst.setEnabled(True)
         self.button_import.setEnabled(True)
+        self.button_cancel_import.setEnabled(False)
+
+    def _cancelImport(self):
+        self.worker.cancel()
+
+    def _taskCanceled(self):
+        print("_taskCanceled")
+        self.thread_import.quit()
+        self.thread_import.wait()
+        self.file_picker_src.setEnabled(True)
+        self.file_picker_dst.setEnabled(True)
+        self.button_import.setEnabled(True)
+        self.button_cancel_import.setEnabled(False)
+        self.statusbar.showMessage("Import canceled.")
 
     def _createOrganizeWidget(self):
         widget_container = QtWidgets.QWidget()

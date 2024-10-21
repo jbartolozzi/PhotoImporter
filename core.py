@@ -4,11 +4,10 @@ import subprocess
 import re
 import shutil
 import sys
-import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
-from PySide6.QtCore import QObject, Signal, Slot, QThread
+from PySide6.QtCore import QObject, Signal
 
 
 def _splitList(input_list, n):
@@ -114,22 +113,7 @@ def _getOutputMovieList(workdir, input_files):
     return output
 
 
-def _processImages(input_file, date_taken, output_jpg_file, output_compressed_file):
-    shutil.copyfile(input_file, output_jpg_file)
-    runCommand(
-        f"/opt/homebrew/bin/gm convert -quality 90% {input_file} {output_compressed_file}")
 
-    if os.path.exists(output_compressed_file):
-        runCommand("SetFile -d \"%s\" \"%s\"" %
-                   (ymdToMdy(date_taken), output_compressed_file))
-
-    if os.path.exists(output_jpg_file):
-        runCommand("SetFile -d \"%s\" \"%s\"" %
-                   (ymdToMdy(date_taken), output_jpg_file))
-
-    else:
-        print(f"Error: output file {output_compressed_file} not found. Exiting.")
-        return
 
 
 def _getInputFileList(import_locations, file_type):
@@ -150,18 +134,22 @@ class Worker(QObject):
     status = Signal(str)
     prange = Signal(int, int)
     finished = Signal()
+    canceled = Signal()
 
     def __init__(self, workdir, num_threads, import_locations):
         super().__init__()
-
+        self.is_canceled = False
         self.workdir = workdir
         self.num_threads = num_threads
         self.import_locations = import_locations
 
+    def cancel(self):
+        self.is_canceled = True
+
     def run(self):
 
         src_files = self.getAllSrcImageFiles(self.import_locations, self.workdir)
-        
+
         self.prange.emit(0, len(src_files))
         new_source_images_tuple = self.getNewSrcImageFiles(
             src_files, self.num_threads, self.workdir)
@@ -170,8 +158,31 @@ class Worker(QObject):
         if len(new_source_images_tuple) > 0:
             self.prange.emit(0, len(new_source_images_tuple))
             self.runImageImport(new_source_images_tuple, self.workdir, self.num_threads)
-        self.progress.emit(len(new_source_images_tuple))
+            self.progress.emit(len(new_source_images_tuple))
+        else:
+            self.status.emit(f"All images up to date.")
+            self.prange.emit(0, 1)
+            self.progress.emit(0)
         self.finished.emit()
+
+    def _processImages(self, input_file, date_taken, output_jpg_file, output_compressed_file):
+        if self.is_canceled:
+            return
+        shutil.copyfile(input_file, output_jpg_file)
+        runCommand(
+            f"/opt/homebrew/bin/gm convert -quality 90% {input_file} {output_compressed_file}")
+
+        if os.path.exists(output_compressed_file):
+            runCommand("SetFile -d \"%s\" \"%s\"" %
+                       (ymdToMdy(date_taken), output_compressed_file))
+
+        if os.path.exists(output_jpg_file):
+            runCommand("SetFile -d \"%s\" \"%s\"" %
+                       (ymdToMdy(date_taken), output_jpg_file))
+
+        else:
+            print(f"Error: output file {output_compressed_file} not found. Exiting.")
+            return
 
     def _processMovies(self, outputs):
         # progress_bar.setRange(0, len(outputs))
@@ -190,6 +201,9 @@ class Worker(QObject):
         compressed_dir = os.path.join(workdir, "Compressed")
 
         def _checkInputThread(input_file):
+            if self.is_canceled:
+                self.canceled.emit()
+                return None
             date_taken, output_jpg_file, output_compressed_file = \
                 getOutputImageNames(
                     input_file, jpg_dir, compressed_dir)
@@ -200,18 +214,24 @@ class Worker(QObject):
 
         output = []
         counter = 0
-        with ThreadPoolExecutor(max_workers=num_threads) as ex:
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
             futures = [
-                ex.submit(_checkInputThread, input_file)
+                executor.submit(_checkInputThread, input_file)
                 for input_file in input_files
             ]
             for future in as_completed(futures):
+                if self.is_canceled:
+                    executor.shutdown(wait=False)
+                    break
                 result = future.result()
-                print(result)
                 counter += 1
                 self.progress.emit(counter)
                 if result is not None:
                     output.append(result)
+
+            if self.is_canceled:
+                self.canceled.emit()
+
         return output
 
     def getAllSrcImageFiles(self, import_locations, workdir):
@@ -224,6 +244,9 @@ class Worker(QObject):
         compressed_dir = os.path.join(workdir, "Compressed")
 
         def _checkInputThread(input_file):
+            if self.is_canceled:
+                self.canceled.emit()
+                return None
             date_taken, output_jpg_file, output_compressed_file = \
                 getOutputImageNames(
                     input_file, jpg_dir, compressed_dir)
@@ -234,17 +257,24 @@ class Worker(QObject):
 
         output = []
         counter = 0
-        with ThreadPoolExecutor(max_workers=num_threads) as ex:
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
             futures = [
-                ex.submit(_checkInputThread, input_file)
+                executor.submit(_checkInputThread, input_file)
                 for input_file in input_files
             ]
             for future in as_completed(futures):
+                if self.is_canceled:
+                    executor.shutdown(wait=False)
+                    break
+
                 result = future.result()
                 counter += 1
                 self.progress.emit(counter)
                 if result is not None:
                     output.append(result)
+
+            if self.is_canceled:
+                self.canceled.emit()
         return output
 
     def runImageImport(self, new_source_images_tuple, workdir, num_threads):
@@ -263,7 +293,7 @@ class Worker(QObject):
             counter = 0
             image_lists = _splitList(new_source_images_tuple, num_threads)
             with ThreadPoolExecutor(max_workers=num_threads) as executor:
-                futures = [executor.submit(_processImages, input_file, date_taken, output_jpg_file, output_compressed_file)
+                futures = [executor.submit(self._processImages, input_file, date_taken, output_jpg_file, output_compressed_file)
                            for sublist in image_lists for input_file, date_taken, output_jpg_file, output_compressed_file in sublist]
                 # Use as_completed to iterate over completed futures
                 for future in as_completed(futures):
@@ -277,8 +307,7 @@ class Worker(QObject):
                         print("Exception:", e, file=sys.stderr)
                         traceback.print_exc()
         else:
-            # self.status.emit("All images are up to date.")
-            pass
+            self.status.emit("All images are up to date.")
 
         # input_movies = _getInputFileList(import_locations, ".mov")
         # statusbar.showMessage(f"Checking {len(input_movies)} movies from input volumes.")
