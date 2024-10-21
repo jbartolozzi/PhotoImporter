@@ -87,6 +87,9 @@ def list_volumes():
 
 
 class SettingsDialog(QtWidgets.QDialog):
+
+    updated = QtCore.Signal()
+
     def __init__(self, parent=None):
         super(SettingsDialog, self).__init__(parent)
         self.setWindowTitle("Settings")
@@ -143,6 +146,7 @@ class SettingsDialog(QtWidgets.QDialog):
     def accept(self):
         self.saveSettings()
         super().accept()
+        self.updated.emit()
 
     def saveSettings(self):
         settings = QtCore.QSettings('rischio', 'PhotoImporter')
@@ -203,7 +207,31 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _openSettings(self):
         dialog = SettingsDialog(self)
+        dialog.updated.connect(self._updateSettingsHud)
         dialog.exec()
+
+    def _createSettingsHudWidget(self):
+        # widget = QtWidgets.QGroupBox("Settings")
+        widget = QtWidgets.QWidget()
+        self.label_hud = QtWidgets.QLabel()
+        self.button_settings = QtWidgets.QPushButton("Settings")
+        self.button_settings.clicked.connect(self._openSettings)
+        hbox = QtWidgets.QHBoxLayout()
+        hbox.addWidget(self.label_hud)
+        hbox.addWidget(self.button_settings)
+        widget.setLayout(hbox)
+        self._updateSettingsHud()
+        return widget
+
+    def _updateSettingsHud(self):
+        settings = QtCore.QSettings('rischio', 'PhotoImporter')
+        compression = settings.value('compression_amount', 90.0, float)
+        compression_enabled = settings.value('compression_enabled', True, bool)
+        import_movies = settings.value('import_movies', True, bool)
+        text = "<b>Compression:</b> " + (f"{compression}% " if compression_enabled else "Disabled ")
+        text += f"<b>Import Movies:</b> {import_movies}"
+        self.label_hud.setText(text)
+
 
     def _createImportWidget(self):
         widget_container = QtWidgets.QWidget()
@@ -278,12 +306,15 @@ class MainWindow(QtWidgets.QMainWindow):
         vbox_source.addWidget(widget_storage)
         group_box_source.setLayout(vbox_source)
 
+        settings_hud = self._createSettingsHudWidget()
         vbox_dest.addWidget(self.file_picker_dst)
+        vbox_dest.addWidget(settings_hud)
         vbox_dest.addWidget(widget_buttons)
         group_box_dest.setLayout(vbox_dest)
 
         vbox_layout.addWidget(group_box_source)
         vbox_layout.addWidget(group_box_dest)
+
         vbox_layout.addWidget(widget_progress)
         vbox_layout.addStretch()
 
