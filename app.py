@@ -178,18 +178,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.tab_widget = QtWidgets.QTabWidget()
 
-        # groupbox_main = QtWidgets.QGroupBox("Photo Importer")
         widget_main = QtWidgets.QWidget()
         main_layout = QtWidgets.QHBoxLayout()
         self.widget_import = self._createImportWidget()
         main_layout.addWidget(self.widget_import)
         widget_main.setLayout(main_layout)
-        # self.widget_organize = self._createOrganizeWidget()
-        # self.widget_organize.setHidden(True)
-        # self.widget_organize.setDisabled(True)
-
-        # self.tab_widget.addTab(self.widget_import, "Import")
-        # self.tab_widget.addTab(self.widget_organize, "Organize")
 
         menu_bar = QtWidgets.QMenuBar(self)
         self.setMenuBar(menu_bar)
@@ -218,6 +211,9 @@ class MainWindow(QtWidgets.QMainWindow):
         label_widget = QtWidgets.QLabel("Import Photos from Volume")
         label_widget.setAlignment(QtCore.Qt.AlignCenter)
 
+        group_box_source = QtWidgets.QGroupBox("Source Location")
+        vbox_source = QtWidgets.QVBoxLayout()
+
         self.file_picker_src = FilePicker(
             label="Import Location",
             is_directory=True,
@@ -230,11 +226,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.storage_bar = QtWidgets.QProgressBar()
         self.storage_bar.setRange(0, 100)
-        # self.storage_bar.setTextVisible(True)
-        # self.storage_bar.setFormat("Free %p%")
         hbox_storage.addWidget(label_storage)
         hbox_storage.addWidget(self.storage_bar)
         widget_storage.setLayout(hbox_storage)
+
+
+        group_box_dest = QtWidgets.QGroupBox("Import Location")
+        vbox_dest = QtWidgets.QVBoxLayout()
+
 
         path = "${HOME}/Pictures/PhotoImportLibrary"
         self.file_picker_dst = FilePicker(
@@ -260,6 +259,7 @@ class MainWindow(QtWidgets.QMainWindow):
         hbox_buttons = QtWidgets.QHBoxLayout()
 
         self.button_import = QtWidgets.QPushButton("Import")
+        self.button_import.setToolTip("Run image import from the source location and copy to the Library Folder")
         self.button_import.clicked.connect(self._runImport)
         self.button_import.setEnabled(False)
 
@@ -272,11 +272,18 @@ class MainWindow(QtWidgets.QMainWindow):
         widget_buttons.setLayout(hbox_buttons)
 
         vbox_layout = QtWidgets.QVBoxLayout()
-        vbox_layout.addWidget(label_widget)
-        vbox_layout.addWidget(self.file_picker_src)
-        vbox_layout.addWidget(widget_storage)
-        vbox_layout.addWidget(self.file_picker_dst)
-        vbox_layout.addWidget(widget_buttons)
+
+        vbox_source.addWidget(label_widget)
+        vbox_source.addWidget(self.file_picker_src)
+        vbox_source.addWidget(widget_storage)
+        group_box_source.setLayout(vbox_source)
+
+        vbox_dest.addWidget(self.file_picker_dst)
+        vbox_dest.addWidget(widget_buttons)
+        group_box_dest.setLayout(vbox_dest)
+
+        vbox_layout.addWidget(group_box_source)
+        vbox_layout.addWidget(group_box_dest)
         vbox_layout.addWidget(widget_progress)
         vbox_layout.addStretch()
 
@@ -330,8 +337,9 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QApplication.processEvents()
         import_locations = self._getImportLocations()
         num_threads = settings.value('num_threads', 8, int)
+        compression_quality = settings.value('compression_amount', 90.0, float)
 
-        self.worker = core.Worker(workdir, num_threads, import_locations, run_compress, import_movies)
+        self.worker = core.Worker(workdir, num_threads, import_locations, run_compress, import_movies, compression_quality)
         self.worker.moveToThread(self.thread_import)
         self.worker.progress.connect(self.progress_bar.setValue)
         self.worker.prange.connect(self.progress_bar.setRange)

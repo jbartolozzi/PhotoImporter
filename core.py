@@ -139,7 +139,7 @@ class Worker(QObject):
     finished = Signal()
     canceled = Signal()
 
-    def __init__(self, workdir, num_threads, import_locations, run_compress, import_movies):
+    def __init__(self, workdir, num_threads, import_locations, run_compress, import_movies, compression_quality):
         super().__init__()
         self.is_canceled = False
         self.workdir = workdir
@@ -147,6 +147,7 @@ class Worker(QObject):
         self.import_locations = import_locations
         self.run_compress = run_compress
         self.import_movies = import_movies
+        self.compression_quality = compression_quality
 
     def cancel(self):
         self.is_canceled = True
@@ -162,7 +163,7 @@ class Worker(QObject):
 
         if len(new_source_images_tuple) > 0:
             self.prange.emit(0, len(new_source_images_tuple))
-            self.runImageImport(new_source_images_tuple, self.workdir, self.num_threads)
+            self.runImageImport(new_source_images_tuple, self.workdir, self.num_threads, self.compression_quality)
             self.progress.emit(len(new_source_images_tuple))
         else:
             self.status.emit(f"All images up to date.")
@@ -183,7 +184,7 @@ class Worker(QObject):
         self.status.emit(f"Import complete.")
         self.finished.emit()
 
-    def _processImages(self, input_file, date_taken, output_jpg_file, output_compressed_file):
+    def _processImages(self, input_file, date_taken, output_jpg_file, output_compressed_file, quality):
         if self.is_canceled:
             return
         shutil.copyfile(input_file, output_jpg_file)
@@ -191,7 +192,7 @@ class Worker(QObject):
 
         if self.run_compress:
             runCommand(
-                f"{gm_path} convert -quality 90% {input_file} {output_compressed_file}")
+                f"{gm_path} convert -quality {quality}% {input_file} {output_compressed_file}")
 
             if os.path.exists(output_compressed_file):
                 runCommand("SetFile -d \"%s\" \"%s\"" %
@@ -318,7 +319,7 @@ class Worker(QObject):
                 self.canceled.emit()
         return output
 
-    def runImageImport(self, new_source_images_tuple, workdir, num_threads):
+    def runImageImport(self, new_source_images_tuple, workdir, num_threads, quality):
         if len(new_source_images_tuple) <= 0:
             return
 
@@ -334,7 +335,7 @@ class Worker(QObject):
             counter = 0
             image_lists = _splitList(new_source_images_tuple, num_threads)
             with ThreadPoolExecutor(max_workers=num_threads) as executor:
-                futures = [executor.submit(self._processImages, input_file, date_taken, output_jpg_file, output_compressed_file)
+                futures = [executor.submit(self._processImages, input_file, date_taken, output_jpg_file, output_compressed_file, quality)
                            for sublist in image_lists for input_file, date_taken, output_jpg_file, output_compressed_file in sublist]
                 # Use as_completed to iterate over completed futures
                 for future in as_completed(futures):
