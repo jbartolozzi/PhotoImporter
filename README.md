@@ -3,7 +3,7 @@ MacOs gui app for importing and organizing images from SD cards.
 
 [Download Binary V1.0](https://github.com/jbartolozzi/PhotoImporter/blob/main/PhotoImporter.zip?raw=true)
 
-![alt text](https://github.com/jbartolozzi/PhotoImporter/blob/main/icon.png)
+<img src="icon.png" alt="drawing" width="200"/> <img src="img/preview.jpg" alt="drawing" width="200"/>
 
 # Development
 To automatically set up environment and build run
