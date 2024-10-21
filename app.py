@@ -112,6 +112,12 @@ class SettingsDialog(QtWidgets.QDialog):
         layout.addWidget(self.compression_spinbox)
 
         # CheckBox for playing a sound
+        self.movies_checkbox = QtWidgets.QCheckBox("Import Movies", self)
+        self.movies_checkbox.setToolTip("Enable copying of movie files from Volume.")
+        self.movies_checkbox.setChecked(True)  # Default checked
+        layout.addWidget(self.movies_checkbox)
+
+        # CheckBox for playing a sound
         self.sound_checkbox = QtWidgets.QCheckBox("Play Sound on Completion", self)
         self.sound_checkbox.setToolTip("Enable or disable import complete sound.")
         self.sound_checkbox.setChecked(True)  # Default checked
@@ -144,6 +150,7 @@ class SettingsDialog(QtWidgets.QDialog):
         settings.setValue('compression_amount', self.compression_spinbox.value())
         settings.setValue("compression_enabled", self.compression_enabled.isChecked())
         settings.setValue('play_sound', self.sound_checkbox.isChecked())
+        settings.setValue('import_movies', self.movies_checkbox.isChecked())
 
     def load_settings(self):
         settings = QtCore.QSettings('rischio', 'PhotoImporter')
@@ -151,6 +158,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self.compression_spinbox.setValue(settings.value('compression_amount', 90.0, float))
         self.compression_enabled.setChecked(settings.value('compression_enabled', True, bool))
         self.sound_checkbox.setChecked(settings.value('play_sound', True, bool))
+        self.movies_checkbox.setChecked(settings.value('import_movies', True, bool))
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -300,7 +308,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _runImport(self):
 
         settings = QtCore.QSettings('rischio', 'PhotoImporter')
-
+        import_movies = settings.value('import_movies', True, bool)
         run_compress = settings.value('compression_enabled', True, bool)
 
         if not os.path.exists("/opt/homebrew/bin/gm") and run_compress is True:
@@ -323,7 +331,7 @@ class MainWindow(QtWidgets.QMainWindow):
         import_locations = self._getImportLocations()
         num_threads = settings.value('num_threads', 8, int)
 
-        self.worker = core.Worker(workdir, num_threads, import_locations, run_compress)
+        self.worker = core.Worker(workdir, num_threads, import_locations, run_compress, import_movies)
         self.worker.moveToThread(self.thread_import)
         self.worker.progress.connect(self.progress_bar.setValue)
         self.worker.prange.connect(self.progress_bar.setRange)
@@ -347,7 +355,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.cancel()
 
     def _taskCanceled(self):
-        print("_taskCanceled")
         self.thread_import.quit()
         self.thread_import.wait()
         self.file_picker_src.setEnabled(True)
@@ -531,6 +538,10 @@ class MainWindow(QtWidgets.QMainWindow):
         compressed_dir = os.path.join(workdir, "Compressed")
         video_dir = os.path.join(workdir, "Video")
 
+        settings = QtCore.QSettings('rischio', 'PhotoImporter')
+        import_movies = settings.value('import_movies', True, bool)
+        run_compress = settings.value('compression_enabled', True, bool)
+
         if len(import_folders) < 1:
             self.notifyUser("PhotoImporter",
                             "No DCIM directories found in any volumes. Plug in a SD card.")
@@ -541,12 +552,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 return []
             os.mkdir(jpg_dir)
 
-        if not os.path.exists(compressed_dir):
+        if not os.path.exists(compressed_dir) and run_compress is True:
             if not self.promptUser("Photo Importer", f"Output directory {compressed_dir} does not exists. Would you like to create it?"):
                 return []
             os.mkdir(compressed_dir)
 
-        if not os.path.exists(video_dir):
+        if not os.path.exists(video_dir) and import_movies is True:
             if not self.promptUser("Photo Importer", f"Output directory {video_dir} does not exists. Would you like to create it?"):
                 return []
             os.mkdir(video_dir)

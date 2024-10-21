@@ -139,13 +139,14 @@ class Worker(QObject):
     finished = Signal()
     canceled = Signal()
 
-    def __init__(self, workdir, num_threads, import_locations, run_compress):
+    def __init__(self, workdir, num_threads, import_locations, run_compress, import_movies):
         super().__init__()
         self.is_canceled = False
         self.workdir = workdir
         self.num_threads = num_threads
         self.import_locations = import_locations
         self.run_compress = run_compress
+        self.import_movies = import_movies
 
     def cancel(self):
         self.is_canceled = True
@@ -168,14 +169,17 @@ class Worker(QObject):
             self.prange.emit(0, 1)
             self.progress.emit(0)
 
-        src_movies = self.getAllSrcMovies(self.import_locations)
-        self.status.emit(f"Checking {len(src_movies)} movies from input volumes.")
-        output_movies = self.getNewMovies(src_movies, self.workdir)
-        self.progress.emit(0)
-        if len(output_movies) > 0:
-            self.status.emit(f"Importing {len(output_movies)} movies.")
-            self.runMovieImport(output_movies)
+        if self.import_movies is True:
+            src_movies = self.getAllSrcMovies(self.import_locations)
+            self.status.emit(f"Checking {len(src_movies)} movies from input volumes.")
+            output_movies = self.getNewMovies(src_movies, self.workdir)
+            self.progress.emit(0)
+            if len(output_movies) > 0:
+                self.prange.emit(0, len(output_movies))
+                self.status.emit(f"Importing {len(output_movies)} movies.")
+                self.runMovieImport(output_movies)
 
+        self.progress.emit(0)
         self.status.emit(f"Import complete.")
         self.finished.emit()
 
