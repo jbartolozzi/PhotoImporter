@@ -13,13 +13,14 @@ if [ ! -d "${CONDA_DIR}" ]; then
     /bin/bash ./Miniconda3-latest-MacOSX.sh -b -s -p "${CONDA_DIR}"
 
     ${CONDA_DIR}/bin/conda update -y conda 
-    ${CONDA_DIR}/bin/conda install -y numpy pandas opencv pillow pyside6
-    ${CONDA_DIR}/bin/conda install -y -c conda-forge "pyside6"
-    yes | ${CONDA_DIR}/bin/pip install --upgrade pyqtdarktheme PyInstaller
+    ${CONDA_DIR}/bin/conda install -y numpy pandas opencv pillow pyside6 --solver classic
+    ${CONDA_DIR}/bin/conda install -y conda-forge::pyside6 --solver classic
+    ${CONDA_DIR}/bin/conda install -y conda-forge::pyinstaller --solver classic
+    yes | ${CONDA_DIR}/bin/pip install Pillow
     
-    rm -f Miniconda3-latest-MacOSX-x86_64.sh
+    rm -f Miniconda3-latest-MacOSX.sh
 fi
 
 export PATH="${CONDA_DIR}/bin:$PATH"
 
-# pyinstaller --onefile --windowed --icon=icon.icns app.py
+pyinstaller -F --windowed --onefile --name PhotoImporter app.py --icon "icon.icns" --noconfirm
