@@ -163,11 +163,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.tab_widget = QtWidgets.QTabWidget()
 
+        # groupbox_main = QtWidgets.QGroupBox("Photo Importer")
+        widget_main = QtWidgets.QWidget()
+        main_layout = QtWidgets.QHBoxLayout()
         self.widget_import = self._createImportWidget()
-        self.widget_organize = self._createOrganizeWidget()
+        main_layout.addWidget(self.widget_import)
+        widget_main.setLayout(main_layout)
+        # self.widget_organize = self._createOrganizeWidget()
+        # self.widget_organize.setHidden(True)
+        # self.widget_organize.setDisabled(True)
 
-        self.tab_widget.addTab(self.widget_import, "Import")
-        self.tab_widget.addTab(self.widget_organize, "Organize")
+        # self.tab_widget.addTab(self.widget_import, "Import")
+        # self.tab_widget.addTab(self.widget_organize, "Organize")
 
         menu_bar = QtWidgets.QMenuBar(self)
         self.setMenuBar(menu_bar)
@@ -179,7 +186,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.thread_import = QtCore.QThread()
 
-        self.setCentralWidget(self.tab_widget)
+        self.setCentralWidget(widget_main)
 
         self._loadWidgetSettings()
         self.setMinimumSize(self.sizeHint())
@@ -192,6 +199,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _createImportWidget(self):
         widget_container = QtWidgets.QWidget()
+
+        label_widget = QtWidgets.QLabel("Import Photos from Volume")
+        label_widget.setAlignment(QtCore.Qt.AlignCenter)
+
         self.file_picker_src = FilePicker(
             label="Import Location",
             is_directory=True,
@@ -246,6 +257,7 @@ class MainWindow(QtWidgets.QMainWindow):
         widget_buttons.setLayout(hbox_buttons)
 
         vbox_layout = QtWidgets.QVBoxLayout()
+        vbox_layout.addWidget(label_widget)
         vbox_layout.addWidget(self.file_picker_src)
         vbox_layout.addWidget(widget_storage)
         vbox_layout.addWidget(self.file_picker_dst)
@@ -424,6 +436,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if "geometry" in settings.allKeys():
             self.restoreGeometry(settings.value('geometry', ''))
 
+        if "state" in settings.allKeys():
+            self.restoreState(settings.value('state'))
+
     def _saveWidgetSettings(self):
         settings = QtCore.QSettings("rischio", "PhotoImporter")
         all_widgets = list((name, widget) for (name, widget) in vars(self).items() if isinstance(
@@ -443,13 +458,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
         geometry = self.saveGeometry()
         settings.setValue('geometry', geometry)
+        settings.setValue('state', self.saveState())
         settings.sync()
 
     def closeEvent(self, event):
-        self.thread_import.quit()
-        self.thread_import.wait()
+        try:
+            self.thread_import.quit()
+            self.thread_import.wait()
+        except:
+            pass
         self._saveWidgetSettings()
-        super().closeEvent(event)
+        # super().closeEvent(event)
+        super(MainWindow, self).closeEvent(event)
+
 
     def promptUser(self, title, question):
         # app = QtWidgets.QApplication.instance()  # checks if QApplication already exists
