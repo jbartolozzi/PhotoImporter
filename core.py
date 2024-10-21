@@ -113,9 +113,6 @@ def _getOutputMovieList(workdir, input_files):
     return output
 
 
-
-
-
 def _getInputFileList(import_locations, file_type):
     output = []
     for import_location in import_locations:
@@ -129,6 +126,46 @@ def _getInputFileList(import_locations, file_type):
     return output
 
 
+def installGm():
+    # AppleScript that opens a new Terminal window and runs a command
+    # Homebrew installation command
+    brew_install_command = '/bin/bash -c \\"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\\" && brew install graphicsmagick'
+
+    # Prompt to press Enter to continue after the installation
+    prompt_command = 'echo \\"Installation complete. Press enter to exit.\\" ; read line'
+
+    # Full command to run in the Terminal
+    full_command = f'{brew_install_command} && {prompt_command}'
+    # command = "ls -a"
+    script = f'''
+    tell application "Terminal"
+        activate
+        do script "{full_command}"
+    end tell
+    '''
+
+    # Execute the AppleScript
+    subprocess.run(['osascript', '-e', script])
+
+
+def _getGmPath():
+    # # Determine if running as a bundled application
+    # if getattr(sys, 'frozen', False):
+    #     # If bundled, the executable path is in sys._MEIPASS (PyInstaller)
+    #     base_path = sys._MEIPASS
+    # else:
+    #     # If not bundled, use the directory of the script or module
+    #     base_path = os.path.dirname(os.path.abspath(__file__))
+
+    # gm_path = os.path.join(base_path, 'gm')
+
+    # if not os.path.exists(gm_path):
+    #     raise EnvironmentError("Bundled GraphicsMagick 'gm' binary not found.")
+
+    # return gm_path
+    return "/opt/homebrew/bin/gm"
+
+
 class Worker(QObject):
     progress = Signal(int)  # Signal to emit progress
     status = Signal(str)
@@ -136,12 +173,13 @@ class Worker(QObject):
     finished = Signal()
     canceled = Signal()
 
-    def __init__(self, workdir, num_threads, import_locations):
+    def __init__(self, workdir, num_threads, import_locations, run_compress):
         super().__init__()
         self.is_canceled = False
         self.workdir = workdir
         self.num_threads = num_threads
         self.import_locations = import_locations
+        self.run_compress = run_compress
 
     def cancel(self):
         self.is_canceled = True
@@ -169,12 +207,15 @@ class Worker(QObject):
         if self.is_canceled:
             return
         shutil.copyfile(input_file, output_jpg_file)
-        runCommand(
-            f"/opt/homebrew/bin/gm convert -quality 90% {input_file} {output_compressed_file}")
+        gm_path = _getGmPath()
 
-        if os.path.exists(output_compressed_file):
-            runCommand("SetFile -d \"%s\" \"%s\"" %
-                       (ymdToMdy(date_taken), output_compressed_file))
+        if self.run_compress:
+            runCommand(
+                f"{gm_path} convert -quality 90% {input_file} {output_compressed_file}")
+
+            if os.path.exists(output_compressed_file):
+                runCommand("SetFile -d \"%s\" \"%s\"" %
+                           (ymdToMdy(date_taken), output_compressed_file))
 
         if os.path.exists(output_jpg_file):
             runCommand("SetFile -d \"%s\" \"%s\"" %

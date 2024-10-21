@@ -21,6 +21,7 @@ class FilePicker(QtWidgets.QWidget):
         self.button = QtWidgets.QPushButton("Select File" if label is None else label)
         self.button.clicked.connect(self.open_file_dialog)
         self.line_edit = QtWidgets.QLineEdit()
+        self.line_edit.setFixedWidth(250)
         if placeholder_text is None:
             self.line_edit.setPlaceholderText("Select File")
         else:
@@ -28,7 +29,6 @@ class FilePicker(QtWidgets.QWidget):
         self.line_edit.textChanged.connect(self.updateLabel)
         self.status_label = QtWidgets.QLabel()
         hbox = QtWidgets.QHBoxLayout()
-        # hbox.addWidget(self.status_label)
         hbox.addWidget(self.line_edit)
         hbox.addWidget(self.button)
         self.filepath_root = filepath_root
@@ -100,11 +100,13 @@ class SettingsDialog(QtWidgets.QDialog):
         layout.addWidget(self.thread_spinbox)
 
         # Double SpinBox for compression amount (float)
+        self.compression_enabled = QtWidgets.QCheckBox("Enable Compression")
         self.compression_spinbox = QtWidgets.QDoubleSpinBox(self)
         self.compression_spinbox.setRange(0.0, 100.0)  # Compression range
         self.compression_spinbox.setSingleStep(1.0)
         self.compression_spinbox.setValue(90.0)  # Default value
         layout.addWidget(QtWidgets.QLabel("Compression Amount (%):"))
+        layout.addWidget(self.compression_enabled)
         layout.addWidget(self.compression_spinbox)
 
         # CheckBox for playing a sound
@@ -137,12 +139,14 @@ class SettingsDialog(QtWidgets.QDialog):
         settings = QtCore.QSettings('rischio', 'PhotoImporter')
         settings.setValue('num_threads', self.thread_spinbox.value())
         settings.setValue('compression_amount', self.compression_spinbox.value())
+        settings.setValue("compression_enabled", self.compression_enabled.isChecked())
         settings.setValue('play_sound', self.sound_checkbox.isChecked())
 
     def load_settings(self):
         settings = QtCore.QSettings('rischio', 'PhotoImporter')
         self.thread_spinbox.setValue(settings.value('num_threads', 8, int))
         self.compression_spinbox.setValue(settings.value('compression_amount', 90.0, float))
+        self.compression_enabled.setChecked(settings.value('compression_enabled', True, bool))
         self.sound_checkbox.setChecked(settings.value('play_sound', True, bool))
 
 
@@ -281,7 +285,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _updateStorageBar(self):
         # Use os.path.abspath to resolve any relative path issues
-        directory = os.path.abspath(self.file_picker_src.text())
+        directory = self.file_picker_src.text()
         if not os.path.exists(directory):
             used_percentage = 0
         else:
@@ -291,6 +295,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.storage_bar.setValue(used_percentage)
 
     def _runImport(self):
+
+        settings = QtCore.QSettings('rischio', 'PhotoImporter')
+
+        run_compress = settings.value('compression_enabled', True, bool)
+
+        if not os.path.exists("/opt/homebrew/bin/gm") and run_compress is True:
+            if self.promptUser("PhotoImporter", "Graphics Magick is required to compress images. It isnt installed. Install it now?"):
+                core.installGm()
+                self.notifyUser("PhotoImporter", f"You must restart PhotoImporter")
+                return
+            else:
+                run_compress = False
+
         self.button_cancel_import.setEnabled(True)
         self.statusbar.showMessage("Importing Images")
         self.file_picker_src.setEnabled(False)
@@ -301,10 +318,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         QtWidgets.QApplication.processEvents()
         import_locations = self._getImportLocations()
-        settings = QtCore.QSettings('rischio', 'PhotoImporter')
         num_threads = settings.value('num_threads', 8, int)
 
-        self.worker = core.Worker(workdir, num_threads, import_locations)
+        self.worker = core.Worker(workdir, num_threads, import_locations, run_compress)
         self.worker.moveToThread(self.thread_import)
         self.worker.progress.connect(self.progress_bar.setValue)
         self.worker.prange.connect(self.progress_bar.setRange)
@@ -471,7 +487,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # super().closeEvent(event)
         super(MainWindow, self).closeEvent(event)
 
-
     def promptUser(self, title, question):
         # app = QtWidgets.QApplication.instance()  # checks if QApplication already exists
         # if not app:  # create QApplication if it doesnt exist
@@ -539,5 +554,6 @@ class MainWindow(QtWidgets.QMainWindow):
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
     app.setWindowIcon(QtGui.QIcon('icon.png'))
+
     w = MainWindow()
     app.exec()

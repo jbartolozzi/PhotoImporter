@@ -23,4 +23,4 @@ fi
 
 export PATH="${CONDA_DIR}/bin:$PATH"
 
-pyinstaller -F --windowed --onefile --name PhotoImporter app.py --icon "icon.icns" --noconfirm
+pyinstaller PhotoImporter.spec --noconfirm
