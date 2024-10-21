@@ -102,17 +102,6 @@ def _getOutputMovieNames(input_file, movie_dir):
     return date_taken, output_mov_file
 
 
-def _getOutputMovieList(workdir, input_files):
-    mov_dir = os.path.join(workdir, "Video")
-    output = []
-    # for input_file in tqdm.tqdm(input_files):
-    for input_file in input_files:
-        date_taken, output_mov_file = _getOutputMovieNames(input_file, mov_dir)
-        if not os.path.exists(output_mov_file):
-            output.append((input_file, date_taken, output_mov_file))
-    return output
-
-
 def _getInputFileList(import_locations, file_type):
     output = []
     for import_location in import_locations:
@@ -127,47 +116,24 @@ def _getInputFileList(import_locations, file_type):
 
 
 def installGm():
-    # AppleScript that opens a new Terminal window and runs a command
-    # Homebrew installation command
     brew_install_command = '/bin/bash -c \\"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\\" && brew install graphicsmagick'
-
-    # Prompt to press Enter to continue after the installation
     prompt_command = 'echo \\"Installation complete. Press enter to exit.\\" ; read line'
-
-    # Full command to run in the Terminal
     full_command = f'{brew_install_command} && {prompt_command}'
-    # command = "ls -a"
     script = f'''
     tell application "Terminal"
         activate
         do script "{full_command}"
     end tell
     '''
-
-    # Execute the AppleScript
     subprocess.run(['osascript', '-e', script])
 
 
 def _getGmPath():
-    # # Determine if running as a bundled application
-    # if getattr(sys, 'frozen', False):
-    #     # If bundled, the executable path is in sys._MEIPASS (PyInstaller)
-    #     base_path = sys._MEIPASS
-    # else:
-    #     # If not bundled, use the directory of the script or module
-    #     base_path = os.path.dirname(os.path.abspath(__file__))
-
-    # gm_path = os.path.join(base_path, 'gm')
-
-    # if not os.path.exists(gm_path):
-    #     raise EnvironmentError("Bundled GraphicsMagick 'gm' binary not found.")
-
-    # return gm_path
     return "/opt/homebrew/bin/gm"
 
 
 class Worker(QObject):
-    progress = Signal(int)  # Signal to emit progress
+    progress = Signal(int)
     status = Signal(str)
     prange = Signal(int, int)
     finished = Signal()
@@ -186,7 +152,7 @@ class Worker(QObject):
 
     def run(self):
 
-        src_files = self.getAllSrcImageFiles(self.import_locations, self.workdir)
+        src_files = self.getAllSrcImageFiles(self.import_locations)
 
         self.prange.emit(0, len(src_files))
         new_source_images_tuple = self.getNewSrcImageFiles(
@@ -201,6 +167,16 @@ class Worker(QObject):
             self.status.emit(f"All images up to date.")
             self.prange.emit(0, 1)
             self.progress.emit(0)
+
+        src_movies = self.getAllSrcMovies(self.import_locations)
+        self.status.emit(f"Checking {len(src_movies)} movies from input volumes.")
+        output_movies = self.getNewMovies(src_movies, self.workdir)
+        self.progress.emit(0)
+        if len(output_movies) > 0:
+            self.status.emit(f"Importing {len(output_movies)} movies.")
+            self.runMovieImport(output_movies)
+
+        self.status.emit(f"Import complete.")
         self.finished.emit()
 
     def _processImages(self, input_file, date_taken, output_jpg_file, output_compressed_file):
@@ -225,17 +201,22 @@ class Worker(QObject):
             print(f"Error: output file {output_compressed_file} not found. Exiting.")
             return
 
-    def _processMovies(self, outputs):
-        # progress_bar.setRange(0, len(outputs))
+    def runMovieImport(self, outputs):
         counter = 0
+        if self.is_canceled:
+            self.canceled.emit()
+            return
         for (input_file, date_taken, output_mov_file) in outputs:
+            if self.is_canceled:
+                self.canceled.emit()
+                return
             if not os.path.exists(os.path.dirname(output_mov_file)):
                 os.mkdir(os.path.dirname(output_mov_file))
 
             shutil.copyfile(input_file, output_mov_file)
-            # statusbar.showMessage(f"Copying {input_file}, {output_mov_file}")
             counter += 1
-            # progress_bar.setValue(counter)
+            self.progress.emit(counter)
+
 
     def _getOutputImageList(self, input_files, num_threads, workdir):
         jpg_dir = os.path.join(workdir, "JPG")
@@ -275,10 +256,25 @@ class Worker(QObject):
 
         return output
 
-    def getAllSrcImageFiles(self, import_locations, workdir):
+    def getAllSrcImageFiles(self, import_locations):
         if len(import_locations) <= 0:
             return []
         return _getInputFileList(import_locations, ".jpg")
+
+    def getAllSrcMovies(self, import_locations):
+        if len(import_locations) <= 0:
+            return []
+        return _getInputFileList(import_locations, ".mov")
+
+    def getNewMovies(self, input_files, workdir):
+        mov_dir = os.path.join(workdir, "Video")
+        output = []
+        # for input_file in tqdm.tqdm(input_files):
+        for input_file in input_files:
+            date_taken, output_mov_file = _getOutputMovieNames(input_file, mov_dir)
+            if not os.path.exists(output_mov_file):
+                output.append((input_file, date_taken, output_mov_file))
+        return output
 
     def getNewSrcImageFiles(self, input_files, num_threads, workdir):
         jpg_dir = os.path.join(workdir, "JPG")
@@ -349,16 +345,3 @@ class Worker(QObject):
                         traceback.print_exc()
         else:
             self.status.emit("All images are up to date.")
-
-        # input_movies = _getInputFileList(import_locations, ".mov")
-        # statusbar.showMessage(f"Checking {len(input_movies)} movies from input volumes.")
-        # input_movies = _getInputFileList(import_locations, ".mov")
-        # output_movies = _getOutputMovieList(workdir, input_movies)
-        # statusbar.showMessage(f"Importing {len(output_movies)} movies from input volumes.")
-
-        # if len(output_movies) > 0:
-        #     _processMovies(output_movies, statusbar, progress_bar)
-        # else:
-        #     statusbar.showMessage("All movies are up to date.")
-
-        # statusbar.showMessage("Import complete.")

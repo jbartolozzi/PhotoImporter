@@ -96,11 +96,13 @@ class SettingsDialog(QtWidgets.QDialog):
         self.thread_spinbox = QtWidgets.QSpinBox(self)
         self.thread_spinbox.setRange(1, 64)  # Assuming 1 to 64 threads
         self.thread_spinbox.setValue(8)  # Default value
+        self.thread_spinbox.setToolTip("Number of worker threads to run Graphics Magick compression.")
         layout.addWidget(QtWidgets.QLabel("Number of Threads:"))
         layout.addWidget(self.thread_spinbox)
 
         # Double SpinBox for compression amount (float)
         self.compression_enabled = QtWidgets.QCheckBox("Enable Compression")
+        self.compression_enabled.setToolTip("Enable or disable Graphics Magick compression.")
         self.compression_spinbox = QtWidgets.QDoubleSpinBox(self)
         self.compression_spinbox.setRange(0.0, 100.0)  # Compression range
         self.compression_spinbox.setSingleStep(1.0)
@@ -111,6 +113,7 @@ class SettingsDialog(QtWidgets.QDialog):
 
         # CheckBox for playing a sound
         self.sound_checkbox = QtWidgets.QCheckBox("Play Sound on Completion", self)
+        self.sound_checkbox.setToolTip("Enable or disable import complete sound.")
         self.sound_checkbox.setChecked(True)  # Default checked
         layout.addWidget(self.sound_checkbox)
 
@@ -219,8 +222,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.storage_bar = QtWidgets.QProgressBar()
         self.storage_bar.setRange(0, 100)
-        self.storage_bar.setTextVisible(True)
-        self.storage_bar.setFormat("Free %p%")
+        # self.storage_bar.setTextVisible(True)
+        # self.storage_bar.setFormat("Free %p%")
         hbox_storage.addWidget(label_storage)
         hbox_storage.addWidget(self.storage_bar)
         widget_storage.setLayout(hbox_storage)
