@@ -2,25 +2,40 @@
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 export PYTHONPATH="${PYTHONPATH}:${SCRIPT_DIR}/python"
 
-CONDA_DIR="${HOME}/conda/photoimporterdev"
-if [ ! -d "${CONDA_DIR}" ]; then
-    
-    if [[ $(uname -m) == 'arm64' ]]; then
-        wget https://repo.anaconda.com/miniconda/Miniconda3-py311_24.3.0-0-MacOSX-arm64.sh -O Miniconda3-latest-MacOSX.sh
-    else
-        wget https://repo.anaconda.com/miniconda/Miniconda3-py311_24.3.0-0-MacOSX-x86_64.sh -O Miniconda3-latest-MacOSX.sh
-    fi
-    /bin/bash ./Miniconda3-latest-MacOSX.sh -b -s -p "${CONDA_DIR}"
+# Environment name
+ENV_NAME="photoimporter"
 
-    ${CONDA_DIR}/bin/conda update -y conda 
-    ${CONDA_DIR}/bin/conda install -y numpy pandas opencv pillow pyside6 --solver classic
-    ${CONDA_DIR}/bin/conda install -y conda-forge::pyside6 --solver classic
-    ${CONDA_DIR}/bin/conda install -y conda-forge::pyinstaller --solver classic
-    yes | ${CONDA_DIR}/bin/pip install Pillow
-    
-    rm -f Miniconda3-latest-MacOSX.sh
+# Check if conda is installed
+if ! command -v conda &> /dev/null; then
+    echo "Conda is not installed. Please install Miniconda or Anaconda first."
+    echo "Visit https://docs.conda.io/en/latest/miniconda.html for installation instructions."
+    exit 1
 fi
 
-export PATH="${CONDA_DIR}/bin:$PATH"
+# Check if the environment already exists
+if conda info --envs | grep -q "$ENV_NAME"; then
+    echo "Environment '$ENV_NAME' already exists. Activating..."
+    conda activate $ENV_NAME
+else
+    echo "Creating new conda environment: $ENV_NAME"
+    conda create -n $ENV_NAME python=3.10 -y
 
-pyinstaller PhotoImporter.spec --noconfirm
+    # Activate the environment
+    echo "Activating conda environment: $ENV_NAME"
+    conda activate $ENV_NAME
+
+    conda install -y numpy pandas opencv pillow pyside6
+    conda install -y conda-forge::pyside6 conda-forge::pyinstaller
+    pip install --upgrade pip
+    pip install --no-cache-dir -r requirements.txt
+
+fi
+
+echo ""
+echo "Setup complete!"
+echo "The environment '$ENV_NAME' is now active."
+echo ""
+echo "When you're done, deactivate the environment with:"
+echo "conda deactivate"
+echo ""
+echo "To create a standalone executable, run:\npyinstaller PhotoImporter.spec --noconfirm"
